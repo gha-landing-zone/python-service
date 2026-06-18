@@ -11,6 +11,25 @@ A minimal FastAPI HTTP service used to exercise the shared composite GitHub Acti
 
 FastAPI also auto-generates interactive API docs at `/docs` (Swagger UI) and `/redoc`.
 
+## Project structure
+
+```
+hello_world_python/
+├── app/
+│   ├── __init__.py
+│   └── main.py         # FastAPI app (routes only)
+├── test/
+│   └── test_main.py    # pytest + TestClient
+├── main.py             # Entry point — runs uvicorn
+├── requirements.txt        # Production deps
+├── requirements-dev.txt    # Dev/test deps
+├── pyproject.toml          # pytest + ruff config
+└── .github/workflows/
+    └── ci.yml          # Calls your shared composite action
+```
+
+`app/main.py` holds only the FastAPI `app` instance and routes — no server startup — so `TestClient` can import it directly without binding a real port.
+
 ## Running locally
 
 ```bash
