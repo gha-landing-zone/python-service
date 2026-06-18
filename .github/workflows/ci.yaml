@@ -1,0 +1,65 @@
+name: CI/CD
+
+# ─────────────────────────────────────────────────────────────────────────────
+# data-ingestion — Pattern A dispatch sender example.
+#
+# This service is Stage 1 of the Data Pipeline Stack. When it deploys
+# successfully on main/tag, it fires a `data-ingestion-deployed`
+# repository_dispatch event to stream-processor so that service can
+# re-deploy and consume the updated message schema.
+#
+# This is the Pattern A "sender" counterpart to the Pattern A "receiver"
+# configured in stream-processor's ci.yml. Together they form a lightweight
+# event-driven chain for hotfix scenarios where running the full
+# deploy-data-pipeline-stack.yml orchestrator is unnecessary.
+# ─────────────────────────────────────────────────────────────────────────────
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+    tags: ["v*"]
+
+jobs:
+  # ── Main pipeline ────────────────────────────────────────────────────────────
+  pipeline:
+    uses: gha-landing-zone/shared-actions/.github/workflows/reusable-python-pipeline.yaml@v1
+    with:
+      service-name: data-ingestion
+      python-version: "3.12"
+      package-manager: uv
+      run-mypy: true
+      run-ruff: true
+      test-command: pytest -v --cov=src --cov-report=xml
+      deploy-env: ${{ github.ref_type == 'tag' && 'production' || 'staging' }}
+      skip-deploy: ${{ github.event_name == 'pull_request' }}
+      ecs-cluster: ${{ github.ref_type == 'tag' && 'your-cluster-production' || 'your-cluster-staging' }}
+      ecs-container-name: ingestion
+      ecs-task-definition: .aws/task-definition.json
+    secrets: inherit
+
+  # ── Pattern A: chain forward to stream-processor on successful main deploys ─
+  # Only fires on main/tag pushes (not PRs). The pipeline job's `if:` for
+  # deploying on PRs means if it's a PR this job also won't fire due to `needs`.
+  notify-downstream:
+    name: "Notify downstream (Pattern A)"
+    runs-on: ubuntu-latest
+    needs: pipeline
+    # Only chain forward when an actual deploy happened (not a PR build)
+    if: |
+      needs.pipeline.result == 'success' &&
+      github.event_name != 'pull_request' &&
+      (github.ref == 'refs/heads/main' || github.ref_type == 'tag')
+    steps:
+      - name: Dispatch data-ingestion-deployed to stream-processor
+        uses: gha-landing-zone/shared-actions/actions/trigger-downstream@v1
+        with:
+          downstream-repo: gha-landing-zone/stream-processor
+          event-type: data-ingestion-deployed
+          github-token: ${{ secrets.ORG_DISPATCH_TOKEN }}
+          upstream-service: data-ingestion
+          upstream-sha: ${{ github.sha }}
+          upstream-environment: ${{ github.ref_type == 'tag' && 'production' || 'staging' }}
+          additional-payload: >-
+            {"triggered_by": "${{ github.actor }}", "ref": "${{ github.ref_name }}"}
